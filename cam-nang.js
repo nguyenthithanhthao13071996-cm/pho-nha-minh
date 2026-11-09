@@ -29,6 +29,6 @@
     }).catch(function () { if (!done) { done = true; clearTimeout(t); fallback(); } });
   }
   document.addEventListener('click', function (e) { var a = e.target.closest && e.target.closest('a.buy'); if (a) send({ type: 'click', pid: a.getAttribute('data-pid'), shop: 'cam-nang' }); });
-  var slug = location.pathname.split('/').pop().replace('.html', '') || 'cam-nang';
+  var slug = window.PNM_SLUG || location.pathname.split('/').pop().replace('.html', '') || 'cam-nang';
   send({ type: 'enter', shop: 'bai-' + slug });
 })();

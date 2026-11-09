@@ -15,7 +15,7 @@
   var norm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd'); };
   var isUrl = function (u) { return /^https:\/\/\S+$/i.test(String(u || '').trim()); };
   var app = $('#app'), modal = $('#modal'), sheetEl = $('#sheet');
-  var KEY = '', S = { tab: 'overview', products: [], vouchers: [], dirtyP: false, dirtyV: false, shop: 'all', q: '', events: null, range: 30, fromSheet: false };
+  var KEY = '', S = { tab: 'overview', products: [], vouchers: [], dirtyP: false, dirtyV: false, shop: 'all', q: '', events: null, range: 30, fromSheet: false, posts: null };
 
   function toast(m) { var t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { t.classList.remove('on'); }, 2600); }
   function api(params) { return fetch(SHEET + '?' + new URLSearchParams(params).toString()).then(function (r) { return r.json(); }); }
@@ -60,10 +60,10 @@
 
   /* ---------- khung chính ---------- */
   function render() {
-    var tabs = [['overview', '📊 Tổng quan'], ['products', '🛍️ Sản phẩm (' + S.products.length + ')'], ['vouchers', '🎟️ Mã giảm giá (' + S.vouchers.length + ')']];
+    var tabs = [['overview', '📊 Tổng quan'], ['products', '🛍️ Sản phẩm (' + S.products.length + ')'], ['vouchers', '🎟️ Mã giảm giá (' + S.vouchers.length + ')'], ['posts', '✍️ Bài viết' + (S.posts ? ' (' + S.posts.length + ')' : '')]];
     app.innerHTML = '<nav class="tabs" role="tablist">' + tabs.map(function (t) { return '<button class="tab" role="tab" data-t="' + t[0] + '" aria-selected="' + (S.tab === t[0]) + '">' + t[1] + '</button>'; }).join('') + '</nav><div id="pane"></div>';
     app.querySelectorAll('.tab').forEach(function (b) { b.addEventListener('click', function () { S.tab = b.getAttribute('data-t'); render(); }); });
-    if (S.tab === 'overview') overview(); else if (S.tab === 'products') products(); else vouchers();
+    if (S.tab === 'overview') overview(); else if (S.tab === 'products') products(); else if (S.tab === 'posts') posts(); else vouchers();
   }
 
   /* ---------- tổng quan ---------- */
@@ -214,8 +214,145 @@
     });
   }
 
+
+  /* ---------- bài viết SEO ---------- */
+  var TAGS = ['Gia dụng', 'Mẹ & bé', 'Tâm linh', 'Decor', 'Ăn uống', 'Mẹo mua sắm', 'Khác'];
+  function posts() {
+    var pane = $('#pane');
+    if (!S.posts) {
+      pane.innerHTML = '<p class="muted" style="padding:16px 0">Đang tải bài viết…</p>';
+      api({ action: 'allposts', key: KEY }).then(function (r) {
+        if (!r || !Array.isArray(r.posts)) { pane.innerHTML = '<div class="card"><h2>Chưa bật mục Bài viết</h2><p>Google Apps Script đang là bản cũ. Cập nhật code bản 3 rồi triển khai <b>Phiên bản mới</b> (xem HUONG-DAN.txt).</p></div>'; return; }
+        S.posts = r.posts; render();
+      }).catch(function () { pane.innerHTML = '<p class="err">Không tải được bài viết.</p>'; });
+      return;
+    }
+    var list = S.posts.slice().sort(function (a, b) { return String(b.updated || b.date).localeCompare(String(a.updated || a.date)); });
+    var pub = list.filter(function (p) { return p.status === 'published'; }).length;
+    pane.innerHTML = '<div class="card"><div class="row"><div class="grow"><h2>Bài viết SEO</h2><p class="muted small" style="margin:0">' + pub + ' bài đang đăng · ' + (list.length - pub) + ' bản nháp. Bài đăng hiện ở mục Cẩm nang, mỗi bài có địa chỉ riêng.</p></div><button class="btn pri" id="padd">＋ Viết bài mới</button></div>' +
+      '<div class="items">' + (list.length ? list.map(function (p) {
+        var score = seo(p).filter(function (c) { return c[0]; }).length;
+        return '<div class="it"><div class="th">' + esc(p.icon || '📝') + '</div><div class="bd"><b>' + esc(p.title) + '</b><span>' +
+          (p.status === 'published' ? '<span style="color:var(--ok);font-weight:800">● Đang đăng</span>' : '<span class="warn">○ Nháp</span>') + ' · ' + esc(p.tag) + ' · SEO ' + score + '/8' + (p.updated ? ' · sửa ' + esc(p.updated) : '') + '</span></div>' +
+          '<div class="acts">' + (p.status === 'published' ? '<a class="ic" style="display:grid;place-items:center;text-decoration:none" href="bai-viet.html?s=' + encodeURIComponent(p.slug) + '" target="_blank" rel="noopener" aria-label="Xem trên web">↗</a>' : '') +
+          '<button class="ic" data-pedit="' + esc(p.slug) + '" aria-label="Sửa">✏️</button><button class="ic" data-pdel="' + esc(p.slug) + '" aria-label="Xoá">🗑️</button></div></div>';
+      }).join('') : '<p class="muted">Chưa có bài nào. Bấm "Viết bài mới" để bắt đầu. Gợi ý: lấy chủ đề từ mục "Khách tìm nhiều nhất" ở tab Tổng quan.</p>') + '</div></div>';
+    $('#padd').addEventListener('click', function () { editPost(null); });
+    var bySlug = function (s) { return S.posts.filter(function (p) { return p.slug === s; })[0]; };
+    pane.querySelectorAll('[data-pedit]').forEach(function (b) { b.addEventListener('click', function () { editPost(bySlug(b.getAttribute('data-pedit'))); }); });
+    pane.querySelectorAll('[data-pdel]').forEach(function (b) { b.addEventListener('click', function () {
+      var p = bySlug(b.getAttribute('data-pdel'));
+      if (!window.confirm('Xoá hẳn bài "' + p.title + '"? Không khôi phục được. (Muốn tạm ẩn thì sửa bài và chọn "Nháp".)')) return;
+      b.disabled = true;
+      post({ action: 'deletePost', key: KEY, slug: p.slug }).then(function (r) {
+        if (r && r.ok) { S.posts = S.posts.filter(function (x) { return x !== p; }); render(); toast('Đã xoá bài.'); } else { b.disabled = false; toast((r && r.error) || 'Xoá không thành công'); }
+      }).catch(function () { b.disabled = false; toast('Không kết nối được Google Sheet, thử lại.'); });
+    }); });
+  }
+  function seo(p) {
+    var md = window.PNM_MD ? window.PNM_MD(p.body) : { toc: [], words: 0 }, tl = String(p.title || '').length, dl = String(p.desc || '').length;
+    var faq = window.PNM_FAQ ? window.PNM_FAQ(p.faq).length : 0, links = (String(p.body).match(/\]\(/g) || []).length;
+    return [
+      [tl >= 30 && tl <= 65, 'Tiêu đề 30–65 ký tự (đang ' + tl + ')'],
+      [dl >= 70 && dl <= 160, 'Mô tả 70–160 ký tự (đang ' + dl + ')'],
+      [md.words >= 600, 'Bài dài từ 600 chữ (đang ' + md.words + ')'],
+      [md.toc.length >= 3, 'Có từ 3 tiêu đề mục ## (đang ' + md.toc.length + ')'],
+      [p.slug && p.title && kw(p.slug, p.body), 'Từ khoá trong đường dẫn có xuất hiện trong bài'],
+      [String(p.products || '').split(',').filter(Boolean).length >= 1, 'Gắn ít nhất 1 sản phẩm'],
+      [faq >= 2, 'Có từ 2 câu hỏi đáp (đang ' + faq + ')'],
+      [links >= 1, 'Có ít nhất 1 liên kết trong bài'],
+    ];
+  }
+  function kw(slug, body) { var stop = ['cach', 'chon', 'nhung', 'meo', 'cho', 'cua', 'voi', 'nhat', 'nen', 'khi', 'nao', 'gia', 'dinh', 'nguoi']; var w = slug.split('-').filter(function (x) { return x.length > 2 && stop.indexOf(x) < 0; }).slice(0, 3); var b = norm(body); return w.length > 0 && w.every(function (x) { return b.indexOf(x) >= 0; }); }
+  function editPost(p) {
+    var isNew = !p, oldSlug = p ? p.slug : '', slugTouched = !isNew;
+    p = Object.assign({ slug: '', title: '', desc: '', tag: 'Mẹo mua sắm', icon: '📝', cover: '', body: '', products: '', faq: '', status: 'draft', date: '', updated: '' }, p || {});
+    var chosen = String(p.products || '').split(',').filter(Boolean), dirty = false;
+    var allP = S.products.length ? S.products : (window.PNM_PRODUCTS || []);
+    sheetEl.classList.add('wide');
+    sheetEl.innerHTML = '<div class="row"><h3 class="grow">' + (isNew ? 'Viết bài mới' : 'Sửa bài viết') + '</h3><button class="ic" id="mx" aria-label="Đóng">✕</button></div>' +
+      '<form id="wf" novalidate>' +
+      '<label class="f">Tiêu đề bài *<small>Nên có từ khoá khách hay tìm, ví dụ: "Cách chọn nồi chiên không dầu cho gia đình 4 người"</small><input type="text" name="title" value="' + esc(p.title) + '" maxlength="140" required></label>' +
+      '<label class="f">Đường dẫn<small>Tự tạo từ tiêu đề. Đổi sau khi đã đăng sẽ làm mất link cũ.</small><input type="text" name="slug" value="' + esc(p.slug) + '" maxlength="80" placeholder="cach-chon-noi-chien"></label>' +
+      '<p class="muted small" style="margin:-4px 0 0">Địa chỉ: <b id="wurl"></b></p>' +
+      '<label class="f">Mô tả ngắn (hiện trên Google) *<small><span id="dcount">0</span>/160 ký tự</small><textarea name="desc" maxlength="300" rows="2">' + esc(p.desc) + '</textarea></label>' +
+      '<div class="grid2"><label class="f">Chủ đề<select name="tag">' + TAGS.concat(TAGS.indexOf(p.tag) < 0 ? [p.tag] : []).map(function (x) { return '<option' + (x === p.tag ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="f">Biểu tượng<input type="text" name="icon" value="' + esc(p.icon) + '" maxlength="4"></label></div>' +
+      '<label class="f">Ảnh bìa (không bắt buộc)<small>Link ảnh bắt đầu bằng https://</small><input type="url" name="cover" value="' + esc(p.cover) + '" placeholder="https://..."></label>' +
+      '<div class="f" style="font-weight:800">Nội dung bài *</div>' +
+      '<div class="row small" style="gap:6px">' + [['## ', 'Mục lớn'], ['### ', 'Mục nhỏ'], ['- ', '• Gạch đầu dòng'], ['**', 'Đậm'], ['[', 'Link'], ['> ', 'Ghi chú'], ['| ', 'Bảng']].map(function (b, i) { return '<button type="button" class="chip" data-ins="' + i + '">' + b[1] + '</button>'; }).join('') +
+      '<span class="grow"></span><button type="button" class="chip" id="wprev" aria-pressed="false">👁 Xem trước</button></div>' +
+      '<textarea name="body" rows="16" style="font-size:15px;line-height:1.55">' + esc(p.body) + '</textarea>' +
+      '<div id="wpv" class="pv" hidden></div>' +
+      '<details class="card small" style="margin:0"><summary style="cursor:pointer;font-weight:800">Cách viết</summary><p style="margin:6px 0 0"><code>## Tiêu đề mục</code> · <code>### Mục nhỏ</code> · <code>- gạch đầu dòng</code> · <code>1. đánh số</code> · <code>**chữ đậm**</code> · <code>*nghiêng*</code> · <code>[chữ](https://link)</code> · <code>![mô tả](https://link-anh)</code> · <code>&gt; ô ghi chú</code> · bảng: <code>| Cột 1 | Cột 2 |</code> mỗi hàng một dòng. Cách 1 dòng trống để sang đoạn mới.</p></details>' +
+      '<div class="f" style="font-weight:800">Sản phẩm gợi ý cuối bài<small>Chọn món liên quan (đã chọn <span id="pc">0</span>)</small></div>' +
+      '<input type="text" id="pq" placeholder="Tìm sản phẩm…"><div id="plist" style="max-height:220px;overflow:auto;border:2px solid var(--line);border-radius:12px;background:#fff;padding:4px 8px"></div>' +
+      '<label class="f">Hỏi đáp (mỗi dòng 1 câu: Câu hỏi | Trả lời)<small>Giúp bài hiện dạng hỏi đáp trên Google</small><textarea name="faq" rows="4" placeholder="Nồi chiên bao nhiêu lít là đủ? | Nhà 3–4 người nên chọn 4,5–6 lít.">' + esc(p.faq) + '</textarea></label>' +
+      '<div class="card" style="margin:0"><b>Điểm SEO: <span id="sc"></span>/8</b><ul id="seo" style="margin:6px 0 0;padding-left:0;list-style:none;font-size:14px"></ul></div>' +
+      '<label class="f">Trạng thái<select name="status"><option value="draft"' + (p.status !== 'published' ? ' selected' : '') + '>Nháp (chưa hiện trên web)</option><option value="published"' + (p.status === 'published' ? ' selected' : '') + '>Đăng lên web</option></select></label>' +
+      '<p class="err" id="werr"></p>' +
+      '<div class="row"><button type="button" class="btn ghost" id="wcancel">Huỷ</button><span class="grow"></span><button class="btn ok" id="wsave">Lưu bài</button></div></form>';
+    openModal();
+    var f = $('#wf');
+    var cur = function () { return { slug: f.slug.value.trim(), title: f.elements.title.value.trim(), desc: f.desc.value.trim(), tag: f.tag.value, icon: f.icon.value.trim() || '📝', cover: f.cover.value.trim(), body: f.body.value, products: chosen.join(','), faq: f.faq.value, status: f.status.value, date: p.date, updated: p.updated }; };
+    var refresh = function () {
+      var c = cur(), checks = seo(c);
+      $('#wurl').textContent = 'phochipi.net/bai-viet?s=' + (c.slug || '…');
+      $('#dcount').textContent = c.desc.length; $('#dcount').style.color = c.desc.length > 160 ? '#DC2626' : '';
+      $('#sc').textContent = checks.filter(function (x) { return x[0]; }).length;
+      $('#seo').innerHTML = checks.map(function (x) { return '<li>' + (x[0] ? '✅ ' : '⬜ ') + esc(x[1]) + '</li>'; }).join('');
+      $('#pc').textContent = chosen.length;
+      if (!$('#wpv').hidden) $('#wpv').innerHTML = '<div class="prose">' + window.PNM_MD(c.body).html + '</div>';
+    };
+    var plist = function () {
+      var q = norm($('#pq').value);
+      var arr = allP.filter(function (x) { return !q || norm(x.name).indexOf(q) >= 0 || chosen.indexOf(x.id) >= 0; }).slice(0, 80);
+      $('#plist').innerHTML = arr.length ? arr.map(function (x) { return '<label class="tog" style="font-size:14px;padding:6px 0;white-space:normal;font-weight:700"><input type="checkbox" value="' + esc(x.id) + '"' + (chosen.indexOf(x.id) >= 0 ? ' checked' : '') + '>' + esc(x.emoji || '🛍️') + ' ' + esc(x.name) + '</label>'; }).join('') : '<p class="muted small">Chưa có sản phẩm. Thêm ở tab Sản phẩm trước.</p>';
+      $('#plist').querySelectorAll('input').forEach(function (cb) { cb.addEventListener('change', function () { chosen = chosen.filter(function (id) { return id !== cb.value; }); if (cb.checked) chosen.push(cb.value); dirty = true; refresh(); }); });
+    };
+    f.addEventListener('input', function (e) {
+      dirty = true;
+      if (e.target.name === 'slug') { slugTouched = true; f.slug.value = f.slug.value.toLowerCase().replace(/\s+/g, '-'); }
+      if (e.target.name === 'title' && !slugTouched) f.slug.value = window.PNM_SLUGIFY(f.elements.title.value);
+      if (e.target.id !== 'pq') refresh();
+    });
+    $('#pq').addEventListener('input', plist);
+    var INS = [['## ', ''], ['### ', ''], ['- ', ''], ['**', '**'], ['[', '](https://)'], ['> ', ''], ['| Cột 1 | Cột 2 |\n| ', ' | |']];
+    f.querySelectorAll('[data-ins]').forEach(function (b) { b.addEventListener('click', function () {
+      var ta = f.body, k = INS[+b.getAttribute('data-ins')], s = ta.selectionStart, e = ta.selectionEnd, v = ta.value, sel = v.slice(s, e);
+      var line = k[1] === '' || k[0] === '| Cột 1 | Cột 2 |\n| ';
+      var pre = line && s > 0 && v[s - 1] !== '\n' ? '\n' : '';
+      ta.value = v.slice(0, s) + pre + k[0] + sel + k[1] + v.slice(e); ta.focus();
+      var pos = s + pre.length + k[0].length + sel.length; ta.setSelectionRange(pos, pos); dirty = true; refresh();
+    }); });
+    $('#wprev').addEventListener('click', function () { var on = $('#wpv').hidden; $('#wpv').hidden = !on; f.body.hidden = on; this.setAttribute('aria-pressed', on); this.textContent = on ? '✏️ Sửa chữ' : '👁 Xem trước'; refresh(); });
+    modal.guard = function () { return !dirty || window.confirm('Bài chưa lưu. Đóng và bỏ thay đổi?'); };
+    $('#mx').addEventListener('click', closeModal); $('#wcancel').addEventListener('click', closeModal);
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var c = cur(), err = '';
+      c.slug = window.PNM_SLUGIFY(c.slug || c.title);
+      if (!c.title) err = 'Cần có tiêu đề bài.';
+      else if (!c.body.trim()) err = 'Bài chưa có nội dung.';
+      else if (c.status === 'published' && !c.desc) err = 'Cần mô tả ngắn trước khi đăng.';
+      else if (c.cover && !isUrl(c.cover)) err = 'Link ảnh bìa phải bắt đầu bằng https://';
+      else if (S.posts.some(function (x) { return x.slug === c.slug && x.slug !== oldSlug; })) err = 'Đường dẫn này đã có bài khác dùng, đổi đường dẫn nhé.';
+      $('#werr').textContent = err; if (err) return;
+      if (!isNew && oldSlug !== c.slug && p.status === 'published' && !window.confirm('Đổi đường dẫn sẽ làm link cũ không mở được nữa. Tiếp tục?')) return;
+      var b = $('#wsave'); b.disabled = true; b.textContent = 'Đang lưu…';
+      post({ action: 'savePost', key: KEY, item: c, oldSlug: oldSlug || c.slug }).then(function (r) {
+        if (r && r.ok) {
+          S.posts = S.posts.filter(function (x) { return x.slug !== oldSlug; }).concat([r.post]);
+          dirty = false; closeModal(true); render();
+          toast(r.post.status === 'published' ? 'Đã đăng bài. Trên web cập nhật trong khoảng 5 phút.' : 'Đã lưu bản nháp.');
+        } else { b.disabled = false; b.textContent = 'Lưu bài'; $('#werr').textContent = (r && r.error) || 'Lưu không thành công'; if (r && r.error === 'Sai mật khẩu') { closeModal(true); setKey(''); showLogin('Phiên đăng nhập hết hạn, đăng nhập lại.'); } }
+      }).catch(function () { b.disabled = false; b.textContent = 'Lưu bài'; $('#werr').textContent = 'Không kết nối được Google Sheet, thử lại.'; });
+    });
+    plist(); refresh();
+  }
+
   function openModal() { modal.classList.add('on'); document.body.style.overflow = 'hidden'; var i = sheetEl.querySelector('input'); if (i) setTimeout(function () { i.focus(); }, 50); }
-  function closeModal() { modal.classList.remove('on'); document.body.style.overflow = ''; }
+  function closeModal(force) { if (force !== true && modal.guard && !modal.guard()) return; modal.guard = null; sheetEl.classList.remove('wide'); modal.classList.remove('on'); document.body.style.overflow = ''; }
   modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
 
